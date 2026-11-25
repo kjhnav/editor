@@ -3,92 +3,229 @@
 <head>
   <meta charset="UTF-8">
   <title>나만의 HTML 에디터</title>
-  <!-- jsDelivr CDN으로 변경 -->
-  <link rel="stylesheet" href="https://jsdelivr.net">
-  <link rel="stylesheet" href="https://jsdelivr.net">
-  <link rel="stylesheet" href="https://jsdelivr.net">
-  
   <style>
-    body { margin: 0; display: flex; flex-direction: column; height: 100vh; font-family: sans-serif; }
-    header { 
-      background: #282a36; color: white; padding: 10px 20px; 
-      display: flex; justify-content: space-between; align-items: center;
-      border-bottom: 1px solid #44475a;
+    * { box-sizing: border-box; }
+    body { 
+      margin: 0; display: flex; flex-direction: column; height: 100vh; 
+      font-family: 'Consolas', 'Malgun Gothic', monospace; background: #1e1e1e; color: #d4d4d4;
     }
+    header { 
+      background: #252526; color: #ffffff; padding: 10px 20px; 
+      display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid #3c3c3c; font-family: sans-serif;
+    }
+    .btn-group { display: flex; gap: 10px; }
     button {
-      background: #50fa7b; color: #282a36; border: none; padding: 8px 16px;
+      background: #4caf50; color: white; border: none; padding: 8px 16px;
       font-weight: bold; border-radius: 4px; cursor: pointer; font-size: 14px;
     }
-    button:hover { background: #40e068; }
-    textarea { flex: 1; font-size: 16px; padding: 10px; border: none; outline: none; }
-    .CodeMirror { flex: 1; font-size: 16px; height: 100%; }
+    button:hover { background: #45a049; }
+    button.secondary { background: #007acc; }
+    button.secondary:hover { background: #0062a3; }
+
+    /* 에디터 컨테이너 */
+    .editor-container {
+      display: flex; flex: 1; overflow: hidden; position: relative;
+    }
+    /* 줄 번호 및 접기 영역 */
+    .gutter {
+      width: 65px; background: #1e1e1e; border-right: 1px solid #333;
+      padding: 15px 0; text-align: right; user-select: none; overflow: hidden;
+      color: #858585; font-size: 15px; line-height: 22px;
+    }
+    .gutter-row {
+      padding-right: 8px; height: 22px; display: flex; justify-content: flex-end; align-items: center;
+    }
+    .fold-btn {
+      cursor: pointer; color: #c5c5c5; font-size: 11px; margin-left: 5px; width: 14px; text-align: center;
+    }
+    .fold-btn:hover { color: #ffffff; }
+
+    /* 코드 입력 영역 */
+    textarea {
+      flex: 1; background: #1e1e1e; color: #d4d4d4; border: none; outline: none;
+      padding: 15px; font-size: 15px; line-height: 22px; resize: none;
+      font-family: 'Consolas', 'Courier New', monospace; tab-size: 2;
+      white-space: pre; overflow: auto;
+    }
   </style>
 </head>
 <body>
 
   <header>
-    <div><strong>HTML 에디터</strong> (줄 번호 옆 화살표로 코드 접기 가능)</div>
-    <button onclick="openPreview()">새 창으로 결과 보기 ▶</button>
+    <div><strong>HTML 에디터</strong> <span style="font-size:12px; color:#aaa;">(줄 번호 옆 ▼ 클릭 시 블록 접기)</span></div>
+    <div class="btn-group">
+      <button class="secondary" onclick="unfoldAll()">모두 펼치기</button>
+      <button onclick="openPreview()">새 창으로 결과 보기 ▶</button>
+    </div>
   </header>
 
-  <textarea id="editor"><!DOCTYPE html>
+  <div class="editor-container">
+    <div class="gutter" id="gutter"></div>
+    <textarea id="editor" spellcheck="false"><!DOCTYPE html>
 <html>
 <head>
   <style>
-    body { font-family: sans-serif; padding: 20px; }
-    h1 { color: #0070f3; }
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+    }
+    h1 {
+      color: #0070f3;
+    }
   </style>
 </head>
 <body>
   <h1>안녕하세요!</h1>
-  <p>왼쪽 줄 번호 옆의 ▼ 버튼을 누르면 태그나 중괄호({})를 접을 수 있습니다.</p>
+  <p>줄 번호 옆의 ▼ 버튼을 누르면 블록이 접힙니다.</p>
 </body>
 </html></textarea>
-
-  <!-- CodeMirror 핵심 및 부가기능 스크립트 (jsDelivr) -->
-  <script src="https://jsdelivr.net"></script>
-  <script src="https://jsdelivr.net"></script>
-  <script src="https://jsdelivr.net"></script>
-  <script src="https://jsdelivr.net"></script>
-  <script src="https://jsdelivr.net"></script>
-  
-  <script src="https://jsdelivr.net"></script>
-  <script src="https://jsdelivr.net"></script>
-  <script src="https://jsdelivr.net"></script>
-  <script src="https://jsdelivr.net"></script>
-  <script src="https://jsdelivr.net"></script>
+  </div>
 
   <script>
-    let editor = null;
+    const editor = document.getElementById('editor');
+    const gutter = document.getElementById('gutter');
+    const foldedBlocks = new Map(); // 접힌 코드 저장소
 
-    // CodeMirror가 정상 로드되었을 때만 실행 (에러 방지)
-    if (typeof CodeMirror !== "undefined") {
-      editor = CodeMirror.fromTextArea(document.getElementById("editor"), {
-        mode: "htmlmixed",
-        theme: "dracula",
-        lineNumbers: true,
-        autoCloseTags: true,
-        indentUnit: 2,
-        smartIndent: true,
-        foldGutter: true,
-        gutters: ["CodeMirror-linenumbers", "CodeMirror-foldgutter"]
-      });
-    } else {
-      alert("에디터 스타일 라이브러리 로딩이 차단되었습니다. 브라우저 확장 프로그램이나 네트워크를 확인해주세요.");
+    // 1. 줄 번호 및 접기 버튼(▼) 렌더링
+    function updateGutter() {
+      const lines = editor.value.split('\n');
+      let html = '';
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        // 여는 중괄호({) 또는 여는 HTML 태그가 있고 같은 줄에서 닫히지 않은 경우 접기 버튼 표시
+        const isFoldable = (line.endsWith('{') || (line.startsWith('<') && !line.startsWith('</') && !line.startsWith('<!') && !line.endsWith('/>') && !line.includes('</')));
+        const isFolded = line.includes('/* ... 접힘 ... */');
+        
+        let icon = '<span class="fold-btn"></span>';
+        if (isFolded) {
+          icon = `<span class="fold-btn" onclick="toggleFold(${i})" title="펼치기">▶</span>`;
+        } else if (isFoldable) {
+          icon = `<span class="fold-btn" onclick="toggleFold(${i})" title="접기">▼</span>`;
+        }
+        
+        html += `<div class="gutter-row">${i + 1}${icon}</div>`;
+      }
+      gutter.innerHTML = html;
+      gutter.scrollTop = editor.scrollTop;
     }
 
-    // 새 창 열어서 결과물 렌더링
-    function openPreview() {
-      const code = editor ? editor.getValue() : document.getElementById("editor").value;
-      const newWindow = window.open("", "_blank");
-      if (newWindow) {
-        newWindow.document.open();
-        newWindow.document.write(code);
-        newWindow.document.close();
-      } else {
-        alert("브라우저에서 팝업이 차단되었습니다. 주소창 오른쪽의 팝업 차단을 해제해주세요!");
+    // 2. 코드 접기 / 펼치기 기능
+    function toggleFold(lineIndex) {
+      const lines = editor.value.split('\n');
+      const targetLine = lines[lineIndex];
+
+      // 이미 접혀있는 상태라면 펼치기
+      if (targetLine.includes('/* ... 접힘 ... */')) {
+        const idMatch = targetLine.match(/\[ID:(\d+)\]/);
+        if (idMatch && foldedBlocks.has(idMatch[1])) {
+          const originalLines = foldedBlocks.get(idMatch[1]);
+          lines.splice(lineIndex, 1, ...originalLines);
+          foldedBlocks.delete(idMatch[1]);
+          editor.value = lines.join('\n');
+          updateGutter();
+        }
+        return;
+      }
+
+      // 접을 범위 찾기 (들여쓰기 기준)
+      const startIndent = targetLine.search(/\S/);
+      let endIndex = -1;
+
+      for (let i = lineIndex + 1; i < lines.length; i++) {
+        if (lines[i].trim() === '') continue;
+        const currentIndent = lines[i].search(/\S/);
+        if (currentIndent <= startIndent) {
+          endIndex = i;
+          break;
+        }
+      }
+
+      if (endIndex > lineIndex) {
+        const id = Date.now().toString().slice(-5);
+        const blockToHide = lines.slice(lineIndex, endIndex + 1);
+        foldedBlocks.set(id, blockToHide);
+
+        const summary = `${targetLine} /* ... 접힘 ... [ID:${id}] */ ${lines[endIndex].trim()}`;
+        lines.splice(lineIndex, endIndex - lineIndex + 1, summary);
+        editor.value = lines.join('\n');
+        updateGutter();
       }
     }
+
+    // 접힌 코드 모두 펼치기
+    function unfoldAll() {
+      let lines = editor.value.split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (lines[i].includes('/* ... 접힘 ... */')) {
+          const idMatch = lines[i].match(/\[ID:(\d+)\]/);
+          if (idMatch && foldedBlocks.has(idMatch[1])) {
+            lines.splice(i, 1, ...foldedBlocks.get(idMatch[1]));
+            foldedBlocks.delete(idMatch[1]);
+          }
+        }
+      }
+      editor.value = lines.join('\n');
+      updateGutter();
+    }
+
+    // 3. 자동 들여쓰기 및 Tab 키 지원
+    editor.addEventListener('keydown', function(e) {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = this.selectionStart;
+        const end = this.selectionEnd;
+        this.value = this.value.substring(0, start) + '  ' + this.value.substring(end);
+        this.selectionStart = this.selectionEnd = start + 2;
+        updateGutter();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const start = this.selectionStart;
+        const textBefore = this.value.substring(0, start);
+        const lines = textBefore.split('\n');
+        const currentLine = lines[lines.length - 1];
+        
+        // 현재 줄의 공백(들여쓰기) 유지 + 여는 괄호/태그 뒤에는 2칸 추가 들여쓰기
+        const indentMatch = currentLine.match(/^\s*/);
+        let indent = indentMatch ? indentMatch[0] : '';
+        const trimmed = currentLine.trim();
+        if (trimmed.endsWith('{') || (trimmed.startsWith('<') && !trimmed.startsWith('</') && !trimmed.endsWith('/>') && !trimmed.includes('</'))) {
+          indent += '  ';
+        }
+
+        const insert = '\n' + indent;
+        this.value = textBefore + insert + this.value.substring(this.selectionEnd);
+        this.selectionStart = this.selectionEnd = start + insert.length;
+        updateGutter();
+      }
+    });
+
+    // 스크롤 및 입력 동기화
+    editor.addEventListener('input', updateGutter);
+    editor.addEventListener('scroll', () => { gutter.scrollTop = editor.scrollTop; });
+
+    // 4. 새 창 열어서 결과물 렌더링 (접힌 코드가 있다면 자동으로 펼쳐서 실행)
+    function openPreview() {
+      let codeToRun = editor.value;
+      // 접힌 블록이 포함되어 있으면 원본 코드로 복원하여 렌더링
+      foldedBlocks.forEach((originalLines, id) => {
+        const regex = new RegExp(`.*\\/\\* \\.\\.\\. 접힘 \\.\\.\\. \\[ID:${id}\\] \\*\\/.*`);
+        codeToRun = codeToRun.replace(regex, originalLines.join('\n'));
+      });
+
+      const newWindow = window.open('', '_blank');
+      if (newWindow) {
+        newWindow.document.open();
+        newWindow.document.write(codeToRun);
+        newWindow.document.close();
+      } else {
+        alert('주소창 오른쪽의 [팝업 차단] 아이콘을 눌러 허용해주세요!');
+      }
+    }
+
+    // 초기 실행
+    updateGutter();
   </script>
 </body>
 </html>
