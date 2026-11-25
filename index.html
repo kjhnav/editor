@@ -31,29 +31,52 @@
     .gutter {
       width: 65px; background: #1e1e1e; border-right: 1px solid #333;
       padding: 15px 0; text-align: right; user-select: none; overflow: hidden;
-      color: #858585; font-size: 15px; line-height: 22px;
+      color: #858585; font-size: 15px; line-height: 24px;
     }
     .gutter-row {
-      padding-right: 8px; height: 22px; display: flex; justify-content: flex-end; align-items: center;
+      padding-right: 8px; height: 24px; display: flex; justify-content: flex-end; align-items: center;
     }
     .fold-btn {
-      cursor: pointer; color: #c5c5c5; font-size: 11px; margin-left: 5px; width: 14px; text-align: center;
+      cursor: pointer; color: #c5c5c5; font-size: 11px; margin-left: 6px; width: 14px; text-align: center;
+      transition: color 0.15s;
     }
     .fold-btn:hover { color: #ffffff; }
+    .fold-btn.folded { color: #4fc1ff; } /* 접힌 상태의 삼각형 강조 */
 
-    /* 코드 입력 영역 */
-    textarea {
-      flex: 1; background: #1e1e1e; color: #d4d4d4; border: none; outline: none;
-      padding: 15px; font-size: 15px; line-height: 22px; resize: none;
+    /* 코드 입력 영역 래퍼 (RStudio 스타일 사각형 오버레이용) */
+    .code-wrapper {
+      position: relative; flex: 1; overflow: hidden; background: #1e1e1e;
+    }
+    textarea, .backdrop {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      padding: 15px; font-size: 15px; line-height: 24px;
       font-family: 'Consolas', 'Courier New', monospace; tab-size: 2;
-      white-space: pre; overflow: auto;
+      white-space: pre; margin: 0; border: none; outline: none;
+    }
+    /* 배경 하이라이트 레이어 (RStudio 사각형 배지 표시) */
+    .backdrop {
+      color: transparent; pointer-events: none; overflow: hidden; z-index: 1;
+    }
+    /* 실제 입력창 */
+    textarea {
+      background: transparent; color: #d4d4d4; resize: none;
+      overflow: auto; z-index: 2; caret-color: #ffffff;
+    }
+    /* RStudio 스타일 접힘 사각형 배지 */
+    .fold-badge {
+      background-color: #2d3748;
+      border: 1px solid #4fc1ff;
+      color: #4fc1ff;
+      border-radius: 4px;
+      padding: 1px 4px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.4);
     }
   </style>
 </head>
 <body>
 
   <header>
-    <div><strong>HTML 에디터</strong> <span style="font-size:12px; color:#aaa;">(줄 번호 옆 ▼ 클릭 시 블록 접기)</span></div>
+    <div><strong>HTML 에디터</strong> <span style="font-size:12px; color:#aaa;">(▼ 접기 / ▶ 또는 사각형 클릭 시 펼치기)</span></div>
     <div class="btn-group">
       <button class="secondary" onclick="unfoldAll()">모두 펼치기</button>
       <button onclick="openPreview()">새 창으로 결과 보기 ▶</button>
@@ -62,7 +85,9 @@
 
   <div class="editor-container">
     <div class="gutter" id="gutter"></div>
-    <textarea id="editor" spellcheck="false"><!DOCTYPE html>
+    <div class="code-wrapper">
+      <div class="backdrop" id="backdrop"></div>
+      <textarea id="editor" spellcheck="false"><!DOCTYPE html>
 <html>
 <head>
   <style>
@@ -77,38 +102,57 @@
 </head>
 <body>
   <h1>안녕하세요!</h1>
-  <p>줄 번호 옆의 ▼ 버튼을 누르면 블록이 접힙니다.</p>
+  <p>줄 번호 옆의 ▼ 버튼을 누르면 RStudio처럼 사각형으로 접힙니다.</p>
 </body>
 </html></textarea>
+    </div>
   </div>
 
   <script>
     const editor = document.getElementById('editor');
     const gutter = document.getElementById('gutter');
-    const foldedBlocks = new Map(); // 접힌 코드 저장소
+    const backdrop = document.getElementById('backdrop');
+    const foldedBlocks = new Map();
+    let foldCounter = 1;
 
-    // 1. 줄 번호 및 접기 버튼(▼) 렌더링
-    function updateGutter() {
+    // 1. 줄 번호, 삼각형 아이콘, RStudio 사각형 배지 렌더링
+    function updateUI() {
       const lines = editor.value.split('\n');
-      let html = '';
+      let gutterHtml = '';
+      let backdropHtml = '';
       
       for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        // 여는 중괄호({) 또는 여는 HTML 태그가 있고 같은 줄에서 닫히지 않은 경우 접기 버튼 표시
-        const isFoldable = (line.endsWith('{') || (line.startsWith('<') && !line.startsWith('</') && !line.startsWith('<!') && !line.endsWith('/>') && !line.includes('</')));
-        const isFolded = line.includes('/* ... 접힘 ... */');
+        const rawLine = lines[i];
+        const line = rawLine.trim();
+        
+        // 접힌 줄인지 정확히 판별 (⟦ ... ⟧ 기호 사용)
+        const isFolded = rawLine.includes('⟦↕');
+        const isFoldable = !isFolded && (
+          line.endsWith('{') || 
+          (line.startsWith('<') && !line.startsWith('</') && !line.startsWith('<!') && !line.endsWith('/>') && !line.includes('</'))
+        );
         
         let icon = '<span class="fold-btn"></span>';
         if (isFolded) {
-          icon = `<span class="fold-btn" onclick="toggleFold(${i})" title="펼치기">▶</span>`;
+          icon = `<span class="fold-btn folded" onclick="toggleFold(${i})" title="펼치기">▶</span>`;
         } else if (isFoldable) {
           icon = `<span class="fold-btn" onclick="toggleFold(${i})" title="접기">▼</span>`;
         }
+        gutterHtml += `<div class="gutter-row">${i + 1}${icon}</div>`;
+
+        // 배경 레이어에 RStudio 스타일 사각형 그리기
+        let escapedLine = rawLine
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
         
-        html += `<div class="gutter-row">${i + 1}${icon}</div>`;
+        escapedLine = escapedLine.replace(/(⟦↕.*?⟧)/g, '<span class="fold-badge">$1</span>');
+        backdropHtml += escapedLine + '\n';
       }
-      gutter.innerHTML = html;
-      gutter.scrollTop = editor.scrollTop;
+
+      gutter.innerHTML = gutterHtml;
+      backdrop.innerHTML = backdropHtml;
+      syncScroll();
     }
 
     // 2. 코드 접기 / 펼치기 기능
@@ -117,14 +161,14 @@
       const targetLine = lines[lineIndex];
 
       // 이미 접혀있는 상태라면 펼치기
-      if (targetLine.includes('/* ... 접힘 ... */')) {
-        const idMatch = targetLine.match(/\[ID:(\d+)\]/);
-        if (idMatch && foldedBlocks.has(idMatch[1])) {
-          const originalLines = foldedBlocks.get(idMatch[1]);
+      if (targetLine.includes('⟦↕')) {
+        const idMatch = targetLine.match(/#(\d+)⟧/);
+        if (idMatch && foldedBlocks.has(idMatch)) {
+          const originalLines = foldedBlocks.get(idMatch);
           lines.splice(lineIndex, 1, ...originalLines);
-          foldedBlocks.delete(idMatch[1]);
+          foldedBlocks.delete(idMatch);
           editor.value = lines.join('\n');
-          updateGutter();
+          updateUI();
         }
         return;
       }
@@ -143,34 +187,61 @@
       }
 
       if (endIndex > lineIndex) {
-        const id = Date.now().toString().slice(-5);
+        const id = String(foldCounter++);
         const blockToHide = lines.slice(lineIndex, endIndex + 1);
+        const hiddenCount = blockToHide.length - 1;
         foldedBlocks.set(id, blockToHide);
 
-        const summary = `${targetLine} /* ... 접힘 ... [ID:${id}] */ ${lines[endIndex].trim()}`;
+        // RStudio 스타일 사각형 텍스트 생성
+        const summary = `${targetLine}  ⟦↕ ${hiddenCount}줄 접힘 #${id}⟧  ${lines[endIndex].trim()}`;
         lines.splice(lineIndex, endIndex - lineIndex + 1, summary);
         editor.value = lines.join('\n');
-        updateGutter();
+        updateUI();
       }
     }
 
-    // 접힌 코드 모두 펼치기
+    // 에디터 본문 내의 RStudio 사각형 배지를 직접 클릭해도 펼쳐지도록 지원
+    editor.addEventListener('click', function() {
+      const cursorPos = this.selectionStart;
+      const textBefore = this.value.substring(0, cursorPos);
+      const currentLineIndex = textBefore.split('\n').length - 1;
+      const lines = this.value.split('\n');
+      
+      if (lines[currentLineIndex] && lines[currentLineIndex].includes('⟦↕')) {
+        const badgeStart = lines[currentLineIndex].indexOf('⟦↕');
+        const badgeEnd = lines[currentLineIndex].indexOf('⟧') + 1;
+        const lineStartPos = textBefore.lastIndexOf('\n') + 1;
+        const clickOffsetInLine = cursorPos - lineStartPos;
+
+        if (clickOffsetInLine >= badgeStart && clickOffsetInLine <= badgeEnd) {
+          toggleFold(currentLineIndex);
+        }
+      }
+    });
+
+    // 3. 모두 펼치기 (중첩되어 접힌 코드도 모두 복원)
     function unfoldAll() {
+      let hasFolded = true;
       let lines = editor.value.split('\n');
-      for (let i = lines.length - 1; i >= 0; i--) {
-        if (lines[i].includes('/* ... 접힘 ... */')) {
-          const idMatch = lines[i].match(/\[ID:(\d+)\]/);
-          if (idMatch && foldedBlocks.has(idMatch[1])) {
-            lines.splice(i, 1, ...foldedBlocks.get(idMatch[1]));
-            foldedBlocks.delete(idMatch[1]);
+
+      while (hasFolded) {
+        hasFolded = false;
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (lines[i].includes('⟦↕')) {
+            const idMatch = lines[i].match(/#(\d+)⟧/);
+            if (idMatch && foldedBlocks.has(idMatch)) {
+              lines.splice(i, 1, ...foldedBlocks.get(idMatch));
+              foldedBlocks.delete(idMatch);
+              hasFolded = true;
+            }
           }
         }
       }
       editor.value = lines.join('\n');
-      updateGutter();
+      updateUI();
     }
 
-    // 3. 자동 들여쓰기 및 Tab 키 지원
+    // 4. 자동 들여쓰기 및 Tab 키 지원
     editor.addEventListener('keydown', function(e) {
       if (e.key === 'Tab') {
         e.preventDefault();
@@ -178,7 +249,7 @@
         const end = this.selectionEnd;
         this.value = this.value.substring(0, start) + '  ' + this.value.substring(end);
         this.selectionStart = this.selectionEnd = start + 2;
-        updateGutter();
+        updateUI();
       } else if (e.key === 'Enter') {
         e.preventDefault();
         const start = this.selectionStart;
@@ -186,33 +257,49 @@
         const lines = textBefore.split('\n');
         const currentLine = lines[lines.length - 1];
         
-        // 현재 줄의 공백(들여쓰기) 유지 + 여는 괄호/태그 뒤에는 2칸 추가 들여쓰기
         const indentMatch = currentLine.match(/^\s*/);
-        let indent = indentMatch ? indentMatch[0] : '';
+        let indent = indentMatch ? indentMatch : '';
         const trimmed = currentLine.trim();
-        if (trimmed.endsWith('{') || (trimmed.startsWith('<') && !trimmed.startsWith('</') && !trimmed.endsWith('/>') && !trimmed.includes('</'))) {
+        if (!trimmed.includes('⟦↕') && (trimmed.endsWith('{') || (trimmed.startsWith('<') && !trimmed.startsWith('</') && !trimmed.endsWith('/>') && !trimmed.includes('</')))) {
           indent += '  ';
         }
 
         const insert = '\n' + indent;
         this.value = textBefore + insert + this.value.substring(this.selectionEnd);
         this.selectionStart = this.selectionEnd = start + insert.length;
-        updateGutter();
+        updateUI();
       }
     });
 
-    // 스크롤 및 입력 동기화
-    editor.addEventListener('input', updateGutter);
-    editor.addEventListener('scroll', () => { gutter.scrollTop = editor.scrollTop; });
+    function syncScroll() {
+      gutter.scrollTop = editor.scrollTop;
+      backdrop.scrollTop = editor.scrollTop;
+      backdrop.scrollLeft = editor.scrollLeft;
+    }
 
-    // 4. 새 창 열어서 결과물 렌더링 (접힌 코드가 있다면 자동으로 펼쳐서 실행)
+    editor.addEventListener('input', updateUI);
+    editor.addEventListener('scroll', syncScroll);
+
+    // 5. 새 창 열어서 결과물 렌더링
     function openPreview() {
       let codeToRun = editor.value;
-      // 접힌 블록이 포함되어 있으면 원본 코드로 복원하여 렌더링
-      foldedBlocks.forEach((originalLines, id) => {
-        const regex = new RegExp(`.*\\/\\* \\.\\.\\. 접힘 \\.\\.\\. \\[ID:${id}\\] \\*\\/.*`);
-        codeToRun = codeToRun.replace(regex, originalLines.join('\n'));
-      });
+      // 중첩 접힘까지 모두 풀어서 원본 HTML 복원
+      let restored = true;
+      while (restored) {
+        restored = false;
+        foldedBlocks.forEach((originalLines, id) => {
+          const lines = codeToRun.split('\n');
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].includes(`#${id}⟧`)) {
+            if (lines[i].includes(`#${id}⟧`)) {
+              lines.splice(i, 1, ...originalLines);
+              codeToRun = lines.join('\n');
+              restored = true;
+              break;
+            }
+          }
+        });
+      }
 
       const newWindow = window.open('', '_blank');
       if (newWindow) {
@@ -225,7 +312,7 @@
     }
 
     // 초기 실행
-    updateGutter();
+    updateUI();
   </script>
 </body>
 </html>
